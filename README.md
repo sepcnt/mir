@@ -439,3 +439,41 @@ The executable is "configurable" with environment variables:
   * Currently MIR works on x86_64, aarch64, ppc64le, s390x, riscv64 Linux and x86_64/aarch64 (Apple M1) MacOS
   * [HOW-TO-PORT-MIR.md](https://github.com/vnmakarov/mir/blob/master/HOW-TO-PORT-MIR.md) outlines process of porting MIR
     * On my estimation an experienced developer can port MIR (including `c2m`) to another target for 1-2 months
+
+## Embedded native-code cache
+
+`MIR_gen_native` generates an eager function normally and passes its unrebased
+machine code and symbolic relocations to a caller-owned callback. Copy them during
+the callback; serialize module/item identities, **not** `MIR_item_t` pointers.
+Keep module data/signatures alongside the image. After linking (to materialize
+floating literals), `MIR_write_module_data_with_func` writes these without ordinary
+function bodies/local registers, using the existing binary reader. Restore every
+native function before execution; these signatures are not an interpreted/JIT
+fallback. Expression-data initializers and label-data bodies are retained where
+needed by the core linker. In a new context, load/link the module data, remap
+relocation items, then call `MIR_load_native`. The load path only
+relocates/publishes code and redirects the existing function thunk: it requires
+neither `MIR_gen_init` nor register allocation or instruction selection.
+
+Currently this covers x86-64 Windows/Linux-style code, including symbol references,
+code-local jump tables and dynamic stack allocation. Images require the same host
+architecture, calling convention and compatible MIR build. Imports are supplied by the embedder; `MIR_native_builtin` reconstructs known
+generator builtin imports without initializing the generator. Capture keeps symbol
+addresses full-width and does not fold them into integers. Label-address
+**data** (`lref`) and already-generated functions
+return zero from capture; native-only embedders must reject these cases.
+Integer literals containing process pointers cannot be made relocatable: express
+addresses as MIR references. Images are trusted executable artifacts, not a
+sandbox or a portable file format. Other architectures retain their existing JIT.
+
+`mir-tests/io.c` exercises fresh-context reload without generator initialization;
+`io_test --native-write image` / `io_test --native-read image` also test separate
+processes with a different external function binding. No cache manifest is added.
+
+### Host IR compilation policy
+
+After `MIR_gen_init`, `MIR_gen_set_host_ir` selects an independent scalar-dispatch
+pipeline: SSA/GVN/copy propagation/DSE, jump and instruction combining, full register
+allocation and coalescing. It omits block cloning, LICM and pressure-relief code motion;
+loops remain supported. The existing numeric-level API keeps its general-purpose
+behavior. Native images retain this policy's machine code; loading runs no passes.

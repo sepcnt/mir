@@ -4305,6 +4305,11 @@ MIR_item_t _MIR_builtin_func (MIR_context_t ctx, MIR_module_t module, const char
     curr_module = saved_module;
   }
   if ((item = item_tab_find (ctx, name, module)) != NULL) {
+    /* A native module can contain a serialized, not-yet-linked builtin import. */
+    if (item->item_type == MIR_import_item && item->addr == NULL && item->ref_def == NULL) {
+      item->addr = addr;
+      item->ref_def = ref_item;
+    }
     if (item->item_type != MIR_import_item || item->addr != addr || item->ref_def != ref_item)
       MIR_get_error_func (
         ctx) (MIR_repeated_decl_error,
@@ -4480,6 +4485,7 @@ void _MIR_update_code_arr (MIR_context_t ctx, uint8_t *base, size_t nloc,
                            const MIR_code_reloc_t *relocs) { /* thread safe */
   size_t i, len, start, max_offset = 0;
 
+  if (nloc == 0) return;
   mir_assert (relocs != NULL);
   for (i = 0; i < nloc; i++)
     if (max_offset < relocs[i].offset) max_offset = relocs[i].offset;
@@ -4618,6 +4624,7 @@ struct io_ctx {
   FILE *io_file;
   int (*io_writer) (MIR_context_t, uint8_t);
   int (*io_reader) (MIR_context_t);
+  int module_data_only_p;
   struct reduce_data *io_reduce_data;
   VARR (MIR_var_t) * proto_vars;
   VARR (MIR_type_t) * proto_types;
@@ -5078,6 +5085,16 @@ static size_t write_item (MIR_context_t ctx, writer_func_t writer, MIR_item_t it
     if (MIR_all_blk_type_p (var.type)) len += write_uint (ctx, writer, var.size);
   }
   len += put_byte (ctx, writer, TAG_EOI);
+  if (ctx->io_ctx->module_data_only_p && func->first_lref == NULL) {
+    int needed_p = FALSE;
+    /* Expression-data initializers still need their IR at link time. */
+    if (func->expr_p)
+      for (MIR_item_t i = DLIST_HEAD (MIR_item_t, item->module->items); i != NULL;
+           i = DLIST_NEXT (MIR_item_t, i))
+        if (i->item_type == MIR_expr_data_item && i->u.expr_data->expr_item == item)
+          needed_p = TRUE;
+    if (!needed_p) return len + write_name (ctx, writer, "endfunc");
+  }
   vars_num = VARR_LENGTH (MIR_var_t, func->vars) - func->nargs;
   len += write_vars (ctx, writer, func, func->vars, func->nargs, vars_num, "local");
   len += write_vars (ctx, writer, func, func->global_vars, 0,
@@ -5119,12 +5136,13 @@ static size_t reduce_writer (const void *start, size_t len, void *aux_data) {
   return n;
 }
 
-void MIR_write_module_with_func (MIR_context_t ctx, int (*const writer) (MIR_context_t, uint8_t),
-                                 MIR_module_t module) {
+static void write_module_with_func (MIR_context_t ctx, int (*const writer) (MIR_context_t, uint8_t),
+                                    MIR_module_t module, int data_only_p) {
   size_t MIR_UNUSED len;
   size_t str_len;
 
   io_writer = writer;
+  ctx->io_ctx->module_data_only_p = data_only_p;
 #ifndef MIR_NO_BIN_COMPRESSION
   if ((io_reduce_data = reduce_encode_start (ctx->alloc, reduce_writer, ctx)) == NULL)
     MIR_get_error_func (ctx) (MIR_binary_io_error, "can not alloc data for MIR binary compression");
@@ -5159,6 +5177,16 @@ void MIR_write_module_with_func (MIR_context_t ctx, int (*const writer) (MIR_con
   if (!reduce_encode_finish (ctx->alloc, io_reduce_data))
     MIR_get_error_func (ctx) (MIR_binary_io_error, "error in writing MIR binary");
 #endif
+}
+
+void MIR_write_module_with_func (MIR_context_t ctx, int (*writer) (MIR_context_t, uint8_t),
+                                 MIR_module_t module) {
+  write_module_with_func (ctx, writer, module, FALSE);
+}
+
+void MIR_write_module_data_with_func (MIR_context_t ctx, int (*writer) (MIR_context_t, uint8_t),
+                                      MIR_module_t module) {
+  write_module_with_func (ctx, writer, module, TRUE);
 }
 
 void MIR_write_with_func (MIR_context_t ctx, int (*const writer) (MIR_context_t, uint8_t)) {

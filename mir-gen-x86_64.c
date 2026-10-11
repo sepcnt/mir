@@ -595,7 +595,8 @@ typedef struct insn_pattern_info insn_pattern_info_t;
 DEF_VARR (insn_pattern_info_t);
 
 struct const_ref {
-  int call_p;            /* flag that constant from call insn */
+  int call_p; /* flag that constant from call insn */
+  MIR_item_t native_item;
   MIR_item_t func_item;  /* non-null for constant representing reference to func item */
   size_t pc;             /* where rel32 address should be in code */
   size_t next_insn_disp; /* displacement of the next insn */
@@ -627,6 +628,8 @@ struct call_ref {
 typedef struct call_ref call_ref_t;
 DEF_VARR (call_ref_t);
 
+DEF_VARR (MIR_native_reloc_t);
+
 struct target_ctx {
   unsigned char alloca_p, block_arg_func_p, leaf_p, keep_fp_p;
   int start_sp_from_bp_offset;
@@ -641,6 +644,7 @@ struct target_ctx {
   VARR (uint64_t) * abs_address_locs;
   VARR (MIR_code_reloc_t) * relocs;
   VARR (call_ref_t) * call_refs;
+  VARR (MIR_native_reloc_t) * native_relocs;
 };
 
 #define alloca_p gen_ctx->target_ctx->alloca_p
@@ -1887,45 +1891,29 @@ static uint64_t read_dec (const char **ptr) {
   return res;
 }
 
-static int pattern_index_cmp (const void *a1, const void *a2) {
-  int i1 = *(const int *) a1, i2 = *(const int *) a2;
-  int c1 = (int) patterns[i1].code, c2 = (int) patterns[i2].code;
-
-  return c1 != c2 ? c1 - c2 : (long) i1 - (long) i2;
-}
-
 static int get_max_insn_size (gen_ctx_t gen_ctx, const char *replacement);
 
 static void patterns_init (gen_ctx_t gen_ctx) {
   MIR_alloc_t alloc = gen_alloc (gen_ctx);
-  int i, ind, n = sizeof (patterns) / sizeof (struct pattern);
-  MIR_insn_code_t prev_code, code;
-  insn_pattern_info_t *info_addr;
-  insn_pattern_info_t pinfo = {0, 0};
+  int n = sizeof (patterns) / sizeof (struct pattern), next[MIR_INSN_BOUND];
+  insn_pattern_info_t pinfo = {0, 0}, *info;
 
-  VARR_CREATE (int, pattern_indexes, alloc, 0);
-  for (i = 0; i < n; i++) {
+  VARR_CREATE (int, pattern_indexes, alloc, n);
+  VARR_TAILOR (int, pattern_indexes, n);
+  VARR_CREATE (insn_pattern_info_t, insn_pattern_info, alloc, MIR_INSN_BOUND);
+  for (int i = 0; i < MIR_INSN_BOUND; i++)
+    VARR_PUSH (insn_pattern_info_t, insn_pattern_info, pinfo);
+  info = VARR_ADDR (insn_pattern_info_t, insn_pattern_info);
+  for (int i = 0; i < n; i++) info[patterns[i].code].num++;
+  for (int i = 0, start = 0; i < MIR_INSN_BOUND; i++) {
+    next[i] = info[i].start = start;
+    start += info[i].num;
+  }
+  /* Stable counting sort preserves pattern priority without comparator calls. */
+  for (int i = 0; i < n; i++) {
     patterns[i].max_insn_size = get_max_insn_size (gen_ctx, patterns[i].replacement);
-#if 0
-    fprintf (stderr, "size of \"%s\" = %d\n", patterns[i].replacement,
-	     patterns[i].max_insn_size);
-#endif
-    VARR_PUSH (int, pattern_indexes, i);
+    VARR_ADDR (int, pattern_indexes)[next[patterns[i].code]++] = i;
   }
-  qsort (VARR_ADDR (int, pattern_indexes), n, sizeof (int), pattern_index_cmp);
-  VARR_CREATE (insn_pattern_info_t, insn_pattern_info, alloc, 0);
-  for (i = 0; i < MIR_INSN_BOUND; i++) VARR_PUSH (insn_pattern_info_t, insn_pattern_info, pinfo);
-  info_addr = VARR_ADDR (insn_pattern_info_t, insn_pattern_info);
-  for (prev_code = MIR_INSN_BOUND, i = 0; i < n; i++) {
-    ind = VARR_GET (int, pattern_indexes, i);
-    if ((code = patterns[ind].code) != prev_code) {
-      if (i != 0) info_addr[prev_code].num = i - info_addr[prev_code].start;
-      info_addr[code].start = i;
-      prev_code = code;
-    }
-  }
-  assert (prev_code != MIR_INSN_BOUND);
-  info_addr[prev_code].num = n - info_addr[prev_code].start;
 }
 
 static int64_t int_value (gen_ctx_t gen_ctx, const MIR_op_t *op) {
@@ -1982,6 +1970,8 @@ static int pattern_match_p (gen_ctx_t gen_ctx, const struct pattern *pat, MIR_in
         return FALSE;
       ch = *++p;
       gen_assert ('0' <= ch && ch <= '3');
+      if (gen_ctx->native_output != NULL && op_ref->mode == MIR_OP_REF && ch != '3')
+        return FALSE; /* An address fitting here may not fit after reloading. */
       int64_t n = int_value (gen_ctx, op_ref);
       if ((ch == '0' && !int8_p (n)) || (ch == '1' && !int16_p (n)) || (ch == '2' && !int32_p (n)))
         return FALSE;
@@ -2309,6 +2299,7 @@ static int setup_imm_addr (struct gen_ctx *gen_ctx, uint64_t v, int *mod, int *r
 
   n = add_to_const_pool (gen_ctx, v);
   setup_rip_rel_addr (0, mod, rm, disp32);
+  cr.native_item = NULL;
   cr.call_p = call_p;
   cr.func_item = func_item;
   cr.pc = 0;
@@ -2502,6 +2493,7 @@ static void out_insn (gen_ctx_t gen_ctx, MIR_insn_t insn, const char *replacemen
     int64_t disp32 = -1, imm32 = -1;
     int imm64_p = FALSE;
     uint64_t imm64 = 0, v;
+    MIR_item_t native_imm = NULL;
     const MIR_op_t *op_ref;
     int const_ref_num = -1, label_ref_num = -1, switch_table_addr_p = FALSE;
 
@@ -2608,6 +2600,7 @@ static void out_insn (gen_ctx_t gen_ctx, MIR_insn_t insn, const char *replacemen
             gen_assert (op2.mode == MIR_OP_INT || op2.mode == MIR_OP_UINT
                         || op2.mode == MIR_OP_REF);
             mem.index = MIR_NON_VAR;
+            if (op2.mode == MIR_OP_REF) gen_ctx->native_ok = FALSE;
             mem.disp = int_value (gen_ctx, &op2);
           }
         } else if (ch == 'd') {
@@ -2637,6 +2630,10 @@ static void out_insn (gen_ctx_t gen_ctx, MIR_insn_t insn, const char *replacemen
         op_ref = &insn->ops[ch - '0'];
         gen_assert (op_ref->mode == MIR_OP_INT || op_ref->mode == MIR_OP_UINT
                     || op_ref->mode == MIR_OP_REF);
+        if (op_ref->mode == MIR_OP_REF) {
+          if (start_ch != 'J') gen_ctx->native_ok = FALSE;
+          native_imm = op_ref->u.ref;
+        }
         int64_t n = int_value (gen_ctx, op_ref);
         if (start_ch == 'i') {
           gen_assert (int8_p (n));
@@ -2696,6 +2693,10 @@ static void out_insn (gen_ctx_t gen_ctx, MIR_insn_t insn, const char *replacemen
           = op_ref->mode != MIR_OP_REF || op_ref->u.ref->item_type != MIR_func_item ? NULL
                                                                                     : op_ref->u.ref;
         const_ref_num = setup_imm_addr (gen_ctx, v, &mod, &rm, &disp32, TRUE, func_item);
+        if (op_ref->mode != MIR_OP_REF)
+          gen_ctx->native_ok = FALSE;
+        else
+          VARR_ADDR (const_ref_t, const_refs)[const_ref_num].native_item = op_ref->u.ref;
         break;
       case '/':
         ch = *++p;
@@ -2792,7 +2793,13 @@ static void out_insn (gen_ctx_t gen_ctx, MIR_insn_t insn, const char *replacemen
     if (disp32 >= 0) put_uint64 (gen_ctx, disp32, 4);
     if (imm8 >= 0) put_byte (gen_ctx, imm8);
     if (imm32 >= 0) put_uint64 (gen_ctx, imm32, 4);
-    if (imm64_p) put_uint64 (gen_ctx, imm64, 8);
+    if (imm64_p) {
+      if (gen_ctx->native_output != NULL && native_imm != NULL) {
+        MIR_native_reloc_t r = {VARR_LENGTH (uint8_t, result_code), SIZE_MAX, native_imm};
+        VARR_PUSH (MIR_native_reloc_t, gen_ctx->target_ctx->native_relocs, r);
+      }
+      put_uint64 (gen_ctx, imm64, 8);
+    }
 
     if (switch_table_addr_p) {
       switch_table_addr_start_offset = (int) VARR_LENGTH (uint8_t, result_code);
@@ -2844,6 +2851,7 @@ static int target_insn_ok_p (gen_ctx_t gen_ctx, MIR_insn_t insn) {
 }
 
 static void translate_init (gen_ctx_t gen_ctx) {
+  VARR_TRUNC (MIR_native_reloc_t, gen_ctx->target_ctx->native_relocs, 0);
   VARR_TRUNC (uint8_t, result_code, 0);
   VARR_TRUNC (uint64_t, const_pool, 0);
   VARR_TRUNC (const_ref_t, const_refs, 0);
@@ -2876,6 +2884,10 @@ static uint8_t *translate_finish (gen_ctx_t gen_ctx, size_t *len) {
 
     set_int64 (VARR_ADDR (uint8_t, result_code) + cr.pc,
                VARR_LENGTH (uint8_t, result_code) - cr.next_insn_disp, 4);
+    if (gen_ctx->native_output != NULL && cr.native_item != NULL) {
+      MIR_native_reloc_t r = {VARR_LENGTH (uint8_t, result_code), cr.pc - 2, cr.native_item};
+      VARR_PUSH (MIR_native_reloc_t, gen_ctx->target_ctx->native_relocs, r);
+    }
     put_uint64 (gen_ctx, VARR_GET (uint64_t, const_pool, cr.const_num), 8);
     put_uint64 (gen_ctx, 0, 8); /* keep 16 bytes align */
   }
@@ -2957,6 +2969,36 @@ static uint8_t *target_translate (gen_ctx_t gen_ctx, size_t *len) {
   return translate_finish (gen_ctx, len);
 }
 
+/* Capture before rebasing and direct-call relaxation; never infer pointers by
+   scanning bytes. */
+static void target_native_output (gen_ctx_t gen_ctx, const uint8_t *code, size_t len) {
+  MIR_context_t ctx = gen_ctx->ctx;
+  VARR (MIR_native_reloc_t) *rs = gen_ctx->target_ctx->native_relocs;
+  uint8_t *copy;
+  if (!gen_ctx->native_ok) return;
+  for (size_t i = 0; i < VARR_LENGTH (MIR_native_reloc_t, rs); i++) {
+    MIR_item_t item = VARR_GET (MIR_native_reloc_t, rs, i).item;
+    const char *name = MIR_item_name (ctx, item);
+    if (name == NULL) {
+      gen_ctx->native_ok = FALSE;
+      return;
+    }
+  }
+  for (size_t i = 0; i < VARR_LENGTH (uint64_t, abs_address_locs); i++) {
+    MIR_native_reloc_t r = {VARR_GET (uint64_t, abs_address_locs, i), SIZE_MAX, NULL};
+    VARR_PUSH (MIR_native_reloc_t, rs, r);
+  }
+  copy = gen_malloc (gen_ctx, len);
+  memcpy (copy, code, len);
+  for (size_t i = 0; i < VARR_LENGTH (MIR_native_reloc_t, rs); i++) {
+    MIR_native_reloc_t r = VARR_GET (MIR_native_reloc_t, rs, i);
+    if (r.item != NULL) memset (copy + r.offset, 0, 8);
+  }
+  gen_ctx->native_output (ctx, curr_func_item, copy, len, VARR_ADDR (MIR_native_reloc_t, rs),
+                          VARR_LENGTH (MIR_native_reloc_t, rs), gen_ctx->native_data);
+  gen_free (gen_ctx, copy);
+}
+
 static void store_call_ref (gen_ctx_t gen_ctx, MIR_item_t ref_func_item, uint8_t *call_addr) {
   call_ref_t call_ref;
 
@@ -2964,6 +3006,16 @@ static void store_call_ref (gen_ctx_t gen_ctx, MIR_item_t ref_func_item, uint8_t
   call_ref.ref_func_item = ref_func_item;
   call_ref.call_addr = call_addr;
   VARR_PUSH (call_ref_t, gen_ctx->target_ctx->call_refs, call_ref);
+}
+
+/* Shared by eager JIT and native-image loading. */
+static int relax_call (uint8_t *call, const uint8_t *address, uint64_t value) {
+  int64_t off = (int64_t) value - (int64_t) (address + 6);
+  if (!int32_p (off)) return FALSE;
+  call[1] = call[1] == 0x25 ? 0xe9 : 0xe8;
+  call[0] = 0x40;
+  set_int64 (call + 2, off, 4);
+  return TRUE;
 }
 
 static void change_calls (gen_ctx_t gen_ctx, uint8_t *base) {
@@ -2976,12 +3028,10 @@ static void change_calls (gen_ctx_t gen_ctx, uint8_t *base) {
     gen_assert (base[cr.pc - 1] == 0x15 || base[cr.pc - 1] == 0x25);
     if (cr.func_item != NULL) store_call_ref (gen_ctx, cr.func_item, (uint8_t *) base + cr.pc - 2);
     uint64_t v = VARR_GET (uint64_t, const_pool, cr.const_num);
-    int64_t off = (int64_t) v - (int64_t) (base + cr.next_insn_disp);
-    if (!int32_p (off)) continue;
-    uint8_t rel_insn[] = {0x40, 0xe8, 0, 0, 0, 0};   /* rex call rel32 */
-    if (base[cr.pc - 1] == 0x25) rel_insn[1] = 0xe9; /* rex jmp rel32 */
-    set_int64 (rel_insn + 2, off, 4);
-    _MIR_change_code (ctx, (uint8_t *) base + cr.pc - 2, (uint8_t *) rel_insn, 6);
+    uint8_t rel_insn[6];
+    memcpy (rel_insn, base + cr.pc - 2, 6);
+    if (relax_call (rel_insn, base + cr.pc - 2, v))
+      _MIR_change_code (ctx, base + cr.pc - 2, rel_insn, 6);
   }
 }
 
@@ -3166,6 +3216,7 @@ static void target_init (gen_ctx_t gen_ctx) {
   VARR_CREATE (const_ref_t, const_refs, alloc, 0);
   VARR_CREATE (label_ref_t, label_refs, alloc, 0);
   VARR_CREATE (uint64_t, abs_address_locs, alloc, 0);
+  VARR_CREATE (MIR_native_reloc_t, gen_ctx->target_ctx->native_relocs, alloc, 0);
   VARR_CREATE (MIR_code_reloc_t, relocs, alloc, 0);
   VARR_CREATE (call_ref_t, gen_ctx->target_ctx->call_refs, alloc, 0);
   MIR_type_t res = MIR_T_D;
@@ -3186,6 +3237,7 @@ static void target_finish (gen_ctx_t gen_ctx) {
   VARR_DESTROY (const_ref_t, const_refs);
   VARR_DESTROY (label_ref_t, label_refs);
   VARR_DESTROY (uint64_t, abs_address_locs);
+  VARR_DESTROY (MIR_native_reloc_t, gen_ctx->target_ctx->native_relocs);
   VARR_DESTROY (MIR_code_reloc_t, relocs);
   VARR_DESTROY (call_ref_t, gen_ctx->target_ctx->call_refs);
   MIR_free (alloc, gen_ctx->target_ctx);

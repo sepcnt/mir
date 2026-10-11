@@ -611,6 +611,12 @@ extern void MIR_write_module (MIR_context_t ctx, FILE *f, MIR_module_t module);
 extern void MIR_read (MIR_context_t ctx, FILE *f);
 extern void MIR_write_with_func (MIR_context_t ctx,
                                  int (*const writer_func) (MIR_context_t, uint8_t));
+/* Write linked module data/signatures for native reload, not executable IR.
+   Floating literal data must already be materialized by MIR_link. Restore all
+   native functions before execution; ordinary function bodies are omitted. */
+extern void MIR_write_module_data_with_func (MIR_context_t ctx,
+                                            int (*writer) (MIR_context_t, uint8_t),
+                                            MIR_module_t module);
 extern void MIR_write_module_with_func (MIR_context_t ctx,
                                         int (*const writer_func) (MIR_context_t, uint8_t),
                                         MIR_module_t module);
