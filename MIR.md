@@ -10,6 +10,9 @@
   * MIR API code has an implicit state called by MIR context
   * MIR context is represented by data of `MIR_context_t`
   * MIR context is created by function `MIR_context_t MIR_init (void)`
+  * `MIR_get_user_data (ctx)` and `MIR_set_user_data (ctx, data)` access a caller-owned
+    pointer, initially `NULL`. Binary I/O callbacks can use it for in-memory streams
+    without global or thread-local state. MIR neither frees nor serializes this pointer.
   * In case you want to use custom allocators, use `MIR_context_t MIR_init2 (MIR_alloc_t, MIR_code_alloc_t)` instead (see [here](CUSTOM-ALLOCATORS.md) for more details)
   * Every MIR API function (except for `MIR_init` / `MIR_init2`) requires MIR context passed through the first argument of type `MIR_context_t`
   * You can use MIR functions in different threads without any synchronization

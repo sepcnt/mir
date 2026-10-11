@@ -32,6 +32,7 @@ struct MIR_context {
   struct gen_ctx *gen_ctx;     /* should be the 1st member */
   struct c2mir_ctx *c2mir_ctx; /* should be the 2nd member */
   MIR_error_func_t error_func;
+  void *user_data;
   MIR_alloc_t alloc;
   MIR_code_alloc_t code_alloc;
   int func_redef_permission_p;        /* when true loaded func can be redfined lately */
@@ -673,6 +674,9 @@ void MIR_set_error_func (MIR_context_t ctx, MIR_error_func_t func) {  // ?? atom
 
 MIR_alloc_t MIR_get_alloc (MIR_context_t ctx) { return ctx->alloc; }
 
+void *MIR_get_user_data (MIR_context_t ctx) { return ctx->user_data; }
+void MIR_set_user_data (MIR_context_t ctx, void *data) { ctx->user_data = data; }
+
 int MIR_get_func_redef_permission_p (MIR_context_t ctx) { return func_redef_permission_p; }
 
 void MIR_set_func_redef_permission (MIR_context_t ctx, int enable_p) {  // ?? atomic access
@@ -740,6 +744,7 @@ MIR_context_t _MIR_init (MIR_alloc_t alloc, MIR_code_alloc_t code_alloc) {
   if ((ctx = MIR_malloc (alloc, sizeof (struct MIR_context))) == NULL)
     default_error (MIR_alloc_error, "Not enough memory for ctx");
   ctx->string_ctx = NULL;
+  ctx->user_data = NULL;
   ctx->alias_ctx = NULL;
   ctx->reg_ctx = NULL;
   ctx->simplify_ctx = NULL;
@@ -6158,6 +6163,7 @@ static void scan_token (MIR_context_t ctx, token_t *token, int (*get_char) (MIR_
     switch (ch) {
     case EOF: token->code = TC_EOFILE; return;
     case ' ':
+    case '\r':
     case '\t': break;
     case '#':
       while ((ch = get_char (ctx)) != '\n' && ch != EOF);

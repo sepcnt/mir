@@ -7986,11 +7986,14 @@ static int try_spilled_reg_mem (gen_ctx_t gen_ctx, MIR_insn_t insn, int nop, MIR
   int n = 0, op_nums[MAX_INSN_RELOAD_MEM_OPS];
   for (int i = nop; i < (int) insn->nops; i++)
     if (insn->ops[i].mode == MIR_OP_VAR && insn->ops[i].u.var == reg) {
+      /* A register can occur more than twice (e.g. ldmul x, x, x).
+         Leave such instructions to the ordinary reload path. */
+      if (n == MAX_INSN_RELOAD_MEM_OPS) goto restore;
       insn->ops[i] = mem_op;
-      gen_assert (n < MAX_INSN_RELOAD_MEM_OPS);
       op_nums[n++] = i;
     }
   if (target_insn_ok_p (gen_ctx, insn)) return TRUE;
+restore:
   for (int i = 0; i < n; i++) insn->ops[op_nums[i]] = saved_op;
   return FALSE;
 }

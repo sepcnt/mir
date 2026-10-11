@@ -16,6 +16,18 @@ with `make clean all`).
 
 # Testing and Benchmarking MIR
 
+For an embedded JIT without the C frontend, tools or tests:
+
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DMIR_BUILD_C2MIR=OFF -DMIR_BUILD_TOOLS=OFF -DBUILD_TESTING=OFF
+cmake --build build
+```
+
+On Windows, run from a Visual Studio developer environment and select
+`-G Ninja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl`.
+Set `BUILD_TESTING=ON` and run `ctest --test-dir build --output-on-failure`
+to exercise the interpreter, generator and binary I/O without C2MIR.
+
  Please use `make test` or `make bench` for testing and benchmarking
 with the right `SRC_DIR` if you build MIR in a different directory.
 

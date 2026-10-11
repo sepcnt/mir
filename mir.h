@@ -535,6 +535,9 @@ extern void MIR_finish_func (MIR_context_t ctx);
 extern void MIR_finish_module (MIR_context_t ctx);
 
 extern MIR_error_func_t MIR_get_error_func (MIR_context_t ctx);
+/* Context-local callback state, owned by the caller. */
+extern void *MIR_get_user_data (MIR_context_t ctx);
+extern void MIR_set_user_data (MIR_context_t ctx, void *data);
 extern void MIR_set_error_func (MIR_context_t ctx, MIR_error_func_t func);
 
 extern MIR_alloc_t MIR_get_alloc (MIR_context_t ctx);

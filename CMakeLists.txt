@@ -39,10 +39,16 @@ endif()
 message("C compiler flags: ${CMAKE_C_FLAGS}")
 
 option(BUILD_TESTING "" ON)
+option(MIR_BUILD_C2MIR "Build the C frontend" ON)
+option(MIR_BUILD_TOOLS "Build command-line tools" ON)
 include(CTest)
 
-add_library(mir OBJECT mir.c mir-gen.c c2mir/c2mir.c mir.h mir-gen.h c2mir/c2mir.h)
-target_include_directories(mir PRIVATE ${PROJECT_SOURCE_DIR})
+add_library(mir OBJECT mir.c mir-gen.c mir.h mir-gen.h)
+if(MIR_BUILD_C2MIR)
+  target_sources(mir PRIVATE c2mir/c2mir.c)
+endif()
+target_include_directories(mir PUBLIC ${PROJECT_SOURCE_DIR})
+set_target_properties(mir PROPERTIES C_STANDARD 11 POSITION_INDEPENDENT_CODE ON)
 if(Threads_FOUND)
   target_compile_definitions(mir PUBLIC "MIR_PARALLEL_GEN")
 endif()
@@ -62,9 +68,12 @@ endif()
 target_link_libraries(mir_shared PRIVATE mir)
 
 # ------------------ C2M --------------------------
+if(MIR_BUILD_TOOLS)
+if(MIR_BUILD_C2MIR)
 add_executable (c2m "c2mir/c2mir-driver.c")
 target_include_directories(c2m PRIVATE ${PROJECT_SOURCE_DIR})
 target_link_libraries(c2m mir ${CMAKE_DL_LIBS} )
+endif()
 
 # ------------------ MIR RUN ----------------------
 
@@ -91,6 +100,11 @@ if(LLVM_FOUND)
   add_executable (l2m "llvm2mir/llvm2mir.c" "llvm2mir/llvm2mir-driver.c" "llvm2mir/llvm2mir.h")
   target_include_directories(l2m PRIVATE ${PROJECT_SOURCE_DIR} ${LLVM_INCLUDE_DIRS})
   target_link_libraries(l2m mir m ${CMAKE_DL_LIBS} LLVM)
+endif()
+endif()
+
+if(NOT BUILD_TESTING)
+  return()
 endif()
 
 # ------------------ ADT tests --------------------------
@@ -246,5 +260,7 @@ add_test(mir2c-test mir2c_test)
 
 # ------------------ c2m tests --------------------------
 
-add_test(c2mir-simple-test c2m -v ${PROJECT_SOURCE_DIR}/sieve.c -ei)
+if(TARGET c2m)
+  add_test(c2mir-simple-test c2m -v ${PROJECT_SOURCE_DIR}/sieve.c -ei)
+endif()
 

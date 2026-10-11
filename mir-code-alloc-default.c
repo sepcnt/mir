@@ -79,15 +79,16 @@ static void *default_mem_map (size_t len, void *user_data CODE_ALLOC_UNUSED) {
 static int default_mem_protect (void *addr, size_t len, MIR_mem_protect_t prot, void *user_data CODE_ALLOC_UNUSED) {
   int native_prod = prot == PROT_WRITE_EXEC ? PAGE_EXECUTE_READWRITE : PAGE_EXECUTE_READ;
   DWORD old_prot = 0;
-  return VirtualProtect (addr, len, native_prod, &old_prot) ? 0 : -1;
+  if (!VirtualProtect (addr, len, native_prod, &old_prot)) return -1;
+  return prot == PROT_WRITE_EXEC || FlushInstructionCache (GetCurrentProcess (), addr, len) ? 0 : -1;
 }
 
 static int default_mem_unmap (void *addr, size_t len, void *user_data CODE_ALLOC_UNUSED) {
-  return VirtualFree (addr, len, MEM_RELEASE) ? 0 : -1;
+  return VirtualFree (addr, 0, MEM_RELEASE) ? 0 : -1;
 }
 
 static void *default_mem_map (size_t len, void *user_data CODE_ALLOC_UNUSED) {
-  return VirtualAlloc (NULL, len, MEM_COMMIT, PAGE_EXECUTE);
+  return VirtualAlloc (NULL, len, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READ);
 }
 #endif /* _WIN32 */
 

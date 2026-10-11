@@ -6,8 +6,8 @@ int main (void) {
 
   MIR_scan_string (ctx,
                    "\n\
-m_loop: module\n\
-loop:   func i64, i64:limit # a comment\n\
+m_loop: module\r\n\
+loop:   func i64, i64:limit # a comment\r\n\
 \n\
         local i64:count\n\
         mov count, 0\n\
