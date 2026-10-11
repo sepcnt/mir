@@ -13,7 +13,7 @@ static int write_byte (MIR_context_t ctx, uint8_t byte) {
 
 static int read_byte (MIR_context_t ctx) { return fgetc (MIR_get_user_data (ctx)); }
 
-#if defined(__x86_64__) || defined(_M_AMD64)
+#if defined(__x86_64__) || defined(_M_AMD64) || defined(__aarch64__)
 static int64_t plus_one (int64_t n) { return n + 1; }
 static int64_t plus_two (int64_t n) { return n + 2; }
 
@@ -127,7 +127,7 @@ static void native_roundtrip (FILE *f, int writing) {
 #endif
 
 int main (int argc, char **argv) {
-#if defined(__x86_64__) || defined(_M_AMD64)
+#if defined(__x86_64__) || defined(_M_AMD64) || defined(__aarch64__)
   if (argc == 3) {
     int writing = strcmp (argv[1], "--native-write") == 0;
     FILE *native = fopen (argv[2], writing ? "wb" : "rb");

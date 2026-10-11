@@ -628,7 +628,6 @@ struct call_ref {
 typedef struct call_ref call_ref_t;
 DEF_VARR (call_ref_t);
 
-DEF_VARR (MIR_native_reloc_t);
 
 struct target_ctx {
   unsigned char alloca_p, block_arg_func_p, leaf_p, keep_fp_p;
@@ -2971,33 +2970,6 @@ static uint8_t *target_translate (gen_ctx_t gen_ctx, size_t *len) {
 
 /* Capture before rebasing and direct-call relaxation; never infer pointers by
    scanning bytes. */
-static void target_native_output (gen_ctx_t gen_ctx, const uint8_t *code, size_t len) {
-  MIR_context_t ctx = gen_ctx->ctx;
-  VARR (MIR_native_reloc_t) *rs = gen_ctx->target_ctx->native_relocs;
-  uint8_t *copy;
-  if (!gen_ctx->native_ok) return;
-  for (size_t i = 0; i < VARR_LENGTH (MIR_native_reloc_t, rs); i++) {
-    MIR_item_t item = VARR_GET (MIR_native_reloc_t, rs, i).item;
-    const char *name = MIR_item_name (ctx, item);
-    if (name == NULL) {
-      gen_ctx->native_ok = FALSE;
-      return;
-    }
-  }
-  for (size_t i = 0; i < VARR_LENGTH (uint64_t, abs_address_locs); i++) {
-    MIR_native_reloc_t r = {VARR_GET (uint64_t, abs_address_locs, i), SIZE_MAX, NULL};
-    VARR_PUSH (MIR_native_reloc_t, rs, r);
-  }
-  copy = gen_malloc (gen_ctx, len);
-  memcpy (copy, code, len);
-  for (size_t i = 0; i < VARR_LENGTH (MIR_native_reloc_t, rs); i++) {
-    MIR_native_reloc_t r = VARR_GET (MIR_native_reloc_t, rs, i);
-    if (r.item != NULL) memset (copy + r.offset, 0, 8);
-  }
-  gen_ctx->native_output (ctx, curr_func_item, copy, len, VARR_ADDR (MIR_native_reloc_t, rs),
-                          VARR_LENGTH (MIR_native_reloc_t, rs), gen_ctx->native_data);
-  gen_free (gen_ctx, copy);
-}
 
 static void store_call_ref (gen_ctx_t gen_ctx, MIR_item_t ref_func_item, uint8_t *call_addr) {
   call_ref_t call_ref;

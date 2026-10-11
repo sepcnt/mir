@@ -326,6 +326,7 @@ DEF_VARR (int);
 DEF_VARR (uint8_t);
 DEF_VARR (uint64_t);
 DEF_VARR (MIR_code_reloc_t);
+DEF_VARR (MIR_native_reloc_t);
 
 #if defined(__x86_64__) || defined(_M_AMD64)
 #include "mir-gen-x86_64.c"
@@ -346,6 +347,37 @@ DEF_VARR (MIR_code_reloc_t);
 #include "mir-gen-riscv64.c"
 #else
 #error "undefined or unsupported generation target"
+#endif
+
+#if defined(__x86_64__) || defined(_M_AMD64) || defined(__aarch64__)
+static void target_native_output (gen_ctx_t gen_ctx, const uint8_t *code, size_t len) {
+  MIR_context_t ctx = gen_ctx->ctx;
+  VARR (MIR_native_reloc_t) *rs = gen_ctx->target_ctx->native_relocs;
+  uint8_t *copy;
+  if (!gen_ctx->native_ok) return;
+  for (size_t i = 0; i < VARR_LENGTH (MIR_native_reloc_t, rs); i++) {
+    MIR_item_t item = VARR_GET (MIR_native_reloc_t, rs, i).item;
+    const char *name = MIR_item_name (ctx, item);
+    if (name == NULL) {
+      gen_ctx->native_ok = FALSE;
+      return;
+    }
+  }
+  for (size_t i = 0; i < VARR_LENGTH (uint64_t, abs_address_locs); i++) {
+    MIR_native_reloc_t r = {VARR_GET (uint64_t, abs_address_locs, i), SIZE_MAX, NULL};
+    VARR_PUSH (MIR_native_reloc_t, rs, r);
+  }
+  copy = gen_malloc (gen_ctx, len);
+  memcpy (copy, code, len);
+  for (size_t i = 0; i < VARR_LENGTH (MIR_native_reloc_t, rs); i++) {
+    MIR_native_reloc_t r = VARR_GET (MIR_native_reloc_t, rs, i);
+    if (r.item != NULL) memset (copy + r.offset, 0, 8);
+  }
+  gen_ctx->native_output (ctx, curr_func_item, copy, len, VARR_ADDR (MIR_native_reloc_t, rs),
+                          VARR_LENGTH (MIR_native_reloc_t, rs), gen_ctx->native_data);
+  gen_free (gen_ctx, copy);
+}
+
 #endif
 
 typedef struct bb_stub *bb_stub_t;
@@ -9512,7 +9544,7 @@ static void *generate_func_code (MIR_context_t ctx, MIR_item_t func_item, int ma
   });
   if (machine_code_p) {
     code = target_translate (gen_ctx, &code_len);
-#if defined(__x86_64__) || defined(_M_AMD64)
+#if defined(__x86_64__) || defined(_M_AMD64) || defined(__aarch64__)
     if (gen_ctx->native_output != NULL) target_native_output (gen_ctx, code, code_len);
 #endif
     machine_code = func_item->u.func->call_addr = _MIR_publish_code (ctx, code, code_len);
@@ -9552,7 +9584,7 @@ int MIR_gen_native (MIR_context_t ctx, MIR_item_t func, MIR_native_func_t output
   gen_ctx_t gen_ctx = *gen_ctx_loc (ctx);
   gen_assert (gen_ctx != NULL && output != NULL && gen_ctx->native_output == NULL);
   gen_ctx->native_ok = FALSE;
-#if defined(__x86_64__) || defined(_M_AMD64)
+#if defined(__x86_64__) || defined(_M_AMD64) || defined(__aarch64__)
   gen_ctx->native_ok = func->u.func->machine_code == NULL && func->u.func->first_lref == NULL;
 #endif
   gen_ctx->native_output = output;
@@ -9569,6 +9601,31 @@ MIR_item_t MIR_native_builtin (MIR_context_t ctx, MIR_module_t module, const cha
     = {mir_ui2f, mir_ui2d, mir_ui2ld, mir_ld2i, va_arg_builtin, va_block_arg_builtin, memcpy};
   for (size_t i = 0; i < sizeof (names) / sizeof (*names); i++)
     if (strcmp (name, names[i]) == 0) return _MIR_builtin_func (ctx, module, name, addresses[i]);
+#elif defined(__aarch64__)
+#define NATIVE_BUILTIN(n, f) \
+  if (strcmp (name, n) == 0) return _MIR_builtin_func (ctx, module, n, f)
+  NATIVE_BUILTIN (VA_ARG, va_arg_builtin);
+  NATIVE_BUILTIN (VA_BLOCK_ARG, va_block_arg_builtin);
+  NATIVE_BUILTIN ("mir.arg_memcpy", memcpy);
+  NATIVE_BUILTIN (I2LD, mir_i2ld);
+  NATIVE_BUILTIN (UI2LD, mir_ui2ld);
+  NATIVE_BUILTIN (F2LD, mir_f2ld);
+  NATIVE_BUILTIN (D2LD, mir_d2ld);
+  NATIVE_BUILTIN (LD2I, mir_ld2i);
+  NATIVE_BUILTIN (LD2F, mir_ld2f);
+  NATIVE_BUILTIN (LD2D, mir_ld2d);
+  NATIVE_BUILTIN (LDADD, mir_ldadd);
+  NATIVE_BUILTIN (LDSUB, mir_ldsub);
+  NATIVE_BUILTIN (LDMUL, mir_ldmul);
+  NATIVE_BUILTIN (LDDIV, mir_lddiv);
+  NATIVE_BUILTIN (LDNEG, mir_ldneg);
+  NATIVE_BUILTIN (LDEQ, mir_ldeq);
+  NATIVE_BUILTIN (LDNE, mir_ldne);
+  NATIVE_BUILTIN (LDLT, mir_ldlt);
+  NATIVE_BUILTIN (LDGE, mir_ldge);
+  NATIVE_BUILTIN (LDGT, mir_ldgt);
+  NATIVE_BUILTIN (LDLE, mir_ldle);
+#undef NATIVE_BUILTIN
 #else
   (void) ctx;
   (void) module;
@@ -9579,7 +9636,7 @@ MIR_item_t MIR_native_builtin (MIR_context_t ctx, MIR_module_t module, const cha
 
 void *MIR_load_native (MIR_context_t ctx, MIR_item_t func, const uint8_t *code, size_t len,
                        const MIR_native_reloc_t *locations, size_t nlocations) {
-#if defined(__x86_64__) || defined(_M_AMD64)
+#if defined(__x86_64__) || defined(_M_AMD64) || defined(__aarch64__)
   uint8_t *copy, *base;
   MIR_alloc_t alloc = MIR_get_alloc (ctx);
   if (func->item_type != MIR_func_item || func->addr == NULL || len == 0) return NULL;
@@ -9614,8 +9671,10 @@ void *MIR_load_native (MIR_context_t ctx, MIR_item_t func, const uint8_t *code, 
         value = (uint64_t) dest->u.func->machine_code;
     }
     memcpy (copy + r->offset, &value, 8);
+#if defined(__x86_64__) || defined(_M_AMD64)
     if (r->call_offset != SIZE_MAX)
       relax_call (copy + r->call_offset, base + r->call_offset, value);
+#endif
   }
   _MIR_publish_code_by_addr (ctx, base, copy, len);
   MIR_free (alloc, copy);

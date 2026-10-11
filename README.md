@@ -455,7 +455,7 @@ relocation items, then call `MIR_load_native`. The load path only
 relocates/publishes code and redirects the existing function thunk: it requires
 neither `MIR_gen_init` nor register allocation or instruction selection.
 
-Currently this covers x86-64 Windows/Linux-style code, including symbol references,
+Currently this covers x86-64 and AArch64 code, including symbol references,
 code-local jump tables and dynamic stack allocation. Images require the same host
 architecture, calling convention and compatible MIR build. Imports are supplied by the embedder; `MIR_native_builtin` reconstructs known
 generator builtin imports without initializing the generator. Capture keeps symbol

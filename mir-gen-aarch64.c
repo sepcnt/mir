@@ -715,6 +715,7 @@ struct target_ctx {
   VARR (label_ref_t) * label_refs;
   VARR (uint64_t) * abs_address_locs;
   VARR (MIR_code_reloc_t) * relocs;
+  VARR (MIR_native_reloc_t) * native_relocs;
 };
 
 #define alloca_p gen_ctx->target_ctx->alloca_p
@@ -2481,11 +2482,22 @@ static uint8_t *target_translate (gen_ctx_t gen_ctx, size_t *len) {
   VARR_TRUNC (uint8_t, result_code, 0);
   VARR_TRUNC (label_ref_t, label_refs, 0);
   VARR_TRUNC (uint64_t, abs_address_locs, 0);
+  VARR_TRUNC (MIR_native_reloc_t, gen_ctx->target_ctx->native_relocs, 0);
   for (insn = DLIST_HEAD (MIR_insn_t, curr_func_item->u.func->insns); insn != NULL;
        insn = DLIST_NEXT (MIR_insn_t, insn)) {
     if (insn->code == MIR_LABEL) {
       set_label_disp (gen_ctx, insn, VARR_LENGTH (uint8_t, result_code));
+    } else if (gen_ctx->native_output != NULL && insn->code == MIR_MOV
+               && insn->ops[1].mode == MIR_OP_REF) {
+      MIR_native_reloc_t r = {VARR_LENGTH (uint8_t, result_code), SIZE_MAX, insn->ops[1].u.ref};
+      gen_assert (insn->ops[0].mode == MIR_OP_VAR && insn->ops[0].u.var < 32);
+      VARR_PUSH (MIR_native_reloc_t, gen_ctx->target_ctx->native_relocs, r);
+      put_uint64 (gen_ctx, 0x58000000 | insn->ops[0].u.var, 4); /* ldr Xd, literal */
     } else if (insn->code != MIR_USE) {
+      if (gen_ctx->native_output != NULL)
+        for (size_t j = 0; j < insn->nops; j++)
+          if (insn->ops[j].mode == MIR_OP_REF && insn->ops[j].u.ref->item_type != MIR_proto_item)
+            gen_ctx->native_ok = FALSE;
       replacement = find_insn_pattern_replacement (gen_ctx, insn);
       if (replacement == NULL) {
         fprintf (stderr, "fatal failure in matching insn:");
@@ -2519,6 +2531,18 @@ static uint8_t *target_translate (gen_ctx_t gen_ctx, size_t *len) {
   }
   while (VARR_LENGTH (uint8_t, result_code) % 16 != 0) /* Align the pool */
     VARR_PUSH (uint8_t, result_code, 0);
+  for (i = 0; i < VARR_LENGTH (MIR_native_reloc_t, gen_ctx->target_ctx->native_relocs); i++) {
+    MIR_native_reloc_t *r = &VARR_ADDR (MIR_native_reloc_t, gen_ctx->target_ctx->native_relocs)[i];
+    size_t offset = VARR_LENGTH (uint8_t, result_code), distance = offset - r->offset;
+    if (distance >= (1 << 20))
+      (*MIR_get_error_func (ctx)) (MIR_alloc_error, "native literal pool is out of range");
+    *(uint32_t *) (VARR_ADDR (uint8_t, result_code) + r->offset) |= (distance / 4) << 5;
+    r->offset = offset;
+    uint64_t value = (uint64_t) r->item->addr;
+    if (r->item->item_type == MIR_data_item && _MIR_reserved_ref_name_p (ctx, MIR_item_name (ctx, r->item)))
+      value = (uint64_t) r->item->u.data->u.els;
+    put_uint64 (gen_ctx, value, 8);
+  }
   *len = VARR_LENGTH (uint8_t, result_code);
   return VARR_ADDR (uint8_t, result_code);
 }
@@ -2667,6 +2691,7 @@ static void target_init (gen_ctx_t gen_ctx) {
   VARR_CREATE (label_ref_t, label_refs, alloc, 0);
   VARR_CREATE (uint64_t, abs_address_locs, alloc, 0);
   VARR_CREATE (MIR_code_reloc_t, relocs, alloc, 0);
+  VARR_CREATE (MIR_native_reloc_t, gen_ctx->target_ctx->native_relocs, alloc, 0);
   patterns_init (gen_ctx);
   temp_jump = MIR_new_insn (ctx, MIR_JMP, MIR_new_label_op (ctx, NULL));
   temp_jump_replacement = find_insn_pattern_replacement (gen_ctx, temp_jump);
@@ -2680,6 +2705,7 @@ static void target_finish (gen_ctx_t gen_ctx) {
   VARR_DESTROY (label_ref_t, label_refs);
   VARR_DESTROY (uint64_t, abs_address_locs);
   VARR_DESTROY (MIR_code_reloc_t, relocs);
+  VARR_DESTROY (MIR_native_reloc_t, gen_ctx->target_ctx->native_relocs);
   MIR_free (alloc, gen_ctx->target_ctx);
   gen_ctx->target_ctx = NULL;
 }

@@ -30,7 +30,7 @@ typedef void (*MIR_native_func_t) (MIR_context_t, MIR_item_t, const uint8_t *, s
 /* Generate normally, additionally delivering a borrowed, address-free image.
    Returns zero without calling output when capture is unsupported or the function
    was already generated. Explicit integer process addresses are not serializable.
-   Currently supports x86-64; output must not reenter the generator. */
+   Currently supports x86-64 and AArch64; output must not reenter the generator. */
 extern int MIR_gen_native (MIR_context_t ctx, MIR_item_t func, MIR_native_func_t output,
                            void *data);
 /* Load a trusted image after MIR_load_module/MIR_link; no MIR_gen_init required.
