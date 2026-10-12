@@ -4458,6 +4458,13 @@ static void gvn_modify (gen_ctx_t gen_ctx) {
       case MIR_UEXT16: GVN_EXT (uint16_t); break;
       case MIR_UEXT32: GVN_EXT (uint32_t); break;
 
+      case MIR_CLZ:
+      case MIR_CLZS: {
+        int64_t p;
+        if ((const_p = get_gvn_2iops (insn, &p)))
+          val = insn->code == MIR_CLZ ? _MIR_clz ((uint64_t) p) : _MIR_clz ((uint32_t) p) - 32;
+        break;
+      }
       case MIR_NEG: GVN_IOP2 (-); break;
       case MIR_NEGS: GVN_IOP2S (-); break;
 

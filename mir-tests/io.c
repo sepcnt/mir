@@ -57,7 +57,11 @@ static void native_roundtrip (FILE *f, int writing) {
                    "mov b,text\n mov r,u8:(b)\n add r,r,i64:(a)\n dmov d,1.5\n d2i b,d\n add "
                    "r,r,b\n switch n,L0,L1,L2\n"
                    "L0: add r,r,10\n ret r\n L1: add r,r,20\n ret r\n L2: ret r\n"
-                   "endfunc\n endmodule\n");
+                   "endfunc\n"
+                   "clz64: func i64,i64:n\n clz n,n\n ret n\n endfunc\n"
+                   "clz32: func i64,i64:n\n clzs n,n\n ret n\n endfunc\n"
+                   "clz_const: func i64\n local i64:a,i64:b\n clz a,0\n clzs b,4294967296\n"
+                   "add a,a,b\n ret a\n endfunc\n endmodule\n");
   if (!writing) {
     size_t size;
     mir_assert (fread (&size, sizeof (size), 1, f) == 1);
@@ -82,8 +86,8 @@ static void native_roundtrip (FILE *f, int writing) {
     MIR_gen_init (ctx);
     MIR_gen_set_host_ir (ctx);
   }
-  const char *names[] = {"entry", "helper", "floating"};
-  for (size_t k = 0; k < 3; k++) {
+  const char *names[] = {"entry", "helper", "floating", "clz64", "clz32", "clz_const"};
+  for (size_t k = 0; k < sizeof (names) / sizeof (*names); k++) {
     MIR_item_t func = named_item (ctx, names[k]);
     if (writing) {
       mir_assert (MIR_gen_native (ctx, func, save_native, f));
@@ -121,6 +125,24 @@ static void native_roundtrip (FILE *f, int writing) {
     mir_assert (entry (n) == n + 3 + (writing ? 1 : 2) + 'A' + 1 + (n == 0 ? 10 : n == 1 ? 20 : 0));
   double (*floating) (void) = named_item (ctx, "floating")->addr;
   mir_assert (floating () == 1.5);
+  for (int bits = 32; bits <= 64; bits += 32) {
+    MIR_item_t func = named_item (ctx, bits == 32 ? "clz32" : "clz64");
+    int64_t (*count) (uint64_t) = func->addr;
+    /* Every highest-bit position, zero, all ones, and ignored high bits for CLZS. */
+    for (int b = -1; b < 64; b++) {
+      uint64_t n = b < 0 ? 0 : UINT64_C (1) << b;
+      int expected = b < 0 || b >= bits ? bits : bits - 1 - b;
+      mir_assert (count (n) == expected);
+      if (writing) {
+        MIR_val_t arg = {.u = n}, result;
+        MIR_interp_arr (ctx, func, &result, 1, &arg);
+        mir_assert (result.i == expected);
+      }
+    }
+    mir_assert (count (UINT64_MAX) == 0);
+  }
+  int64_t (*constant) (void) = named_item (ctx, "clz_const")->addr;
+  mir_assert (constant () == 96);
   if (writing) MIR_gen_finish (ctx);
   MIR_finish (ctx);
 }

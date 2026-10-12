@@ -1662,6 +1662,10 @@ static struct pattern patterns[] = {
   {MIR_BSTART, "r", "X 8B r0 H4", 0}, /* r0 = sp */
   {MIR_BEND, "r", "X 8B h4 R0", 0},   /* sp = r0 */
 
+  /* BSR leaves its result undefined for zero.  Skip the fixed 7-byte MOV for nonzero inputs.
+     Use REX.W on MOV even for CLZS so the displacement is independent of register allocation. */
+  {MIR_CLZ, "r r", "X 0F BD r0 R1; 75 07; X C7 /0 R0 V7F; X 83 /6 R0 v3F", 0},
+  {MIR_CLZS, "r r", "Y 0F BD r0 R1; 75 07; X C7 /0 R0 V3F; Y 83 /6 R0 v1F", 0},
   {MIR_NEG, "r 0", "X F7 /3 R1", 0},   /* neg r0 */
   {MIR_NEG, "m3 0", "X F7 /3 m1", 0},  /* neg m0 */
   {MIR_NEGS, "r 0", "Y F7 /3 R1", 0},  /* neg r0 */

@@ -208,6 +208,16 @@ static void out_insn (MIR_context_t ctx, FILE *f, MIR_insn_t insn) {
   case MIR_UI2D: out_op2 (ctx, f, ops, "(double) (uint64_t)"); break;
   case MIR_UI2F: out_op2 (ctx, f, ops, "(float) (uint64_t)"); break;
   case MIR_UI2LD: out_op2 (ctx, f, ops, "(long double) (uint64_t)"); break;
+  case MIR_CLZ:
+  case MIR_CLZS:
+    curr_temp++;
+    fprintf (f, "{ uint64_t __v%d = (uint%d_t) ", curr_temp, insn->code == MIR_CLZ ? 64 : 32);
+    out_op (ctx, f, ops[1]);
+    fprintf (f, "; unsigned __t%d = %d; for (; __v%d; __v%d >>= 1) __t%d--; ", curr_temp,
+             insn->code == MIR_CLZ ? 64 : 32, curr_temp, curr_temp, curr_temp);
+    out_op (ctx, f, ops[0]);
+    fprintf (f, " = __t%d; }\n", curr_temp);
+    break;
   case MIR_NEG: out_op2 (ctx, f, ops, "- (int64_t)"); break;
   case MIR_NEGS: out_op2 (ctx, f, ops, "- (int32_t)"); break;
   case MIR_FNEG:

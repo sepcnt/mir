@@ -314,6 +314,7 @@
     | `MIR_EXT32`             | 2    | **sign** extension of lower **32 bit** input part      |
     | `MIR_UEXT32`            | 2    | **zero** extension of lower **32 bit** input part      |
     |                         |      |                                                        |
+    | `MIR_CLZ`, `MIR_CLZS`   | 2    | leading zero count in **64/32 bits**; zero returns the width |
     | `MIR_NEG`               | 2    | changing sign of **64-bit* integer value               |
     | `MIR_NEGS`              | 2    | changing sign of **32-bit* integer value               |
     |                         |      |                                                        |

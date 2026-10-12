@@ -1706,6 +1706,8 @@ static const struct pattern patterns[] = {
   {MIR_UBLES, "l r I", SCMPI "; " UBLE},
 
   // ??? with shift
+  {MIR_CLZ, "r r", "dac01000:fffffc00 rd0 rn1"},
+  {MIR_CLZS, "r r", "5ac01000:fffffc00 rd0 rn1"},
   {MIR_NEG, "r r", "cb0003e0:ff2003e0 rd0 rm1"},  /* neg Rd,Rm */
   {MIR_NEGS, "r r", "4b0003e0:ff2003e0 rd0 rm1"}, /* neg Wd,Wm */
   {MIR_FNEG, "r r", "1e214000:fffffc00 vd0 vn1"}, /* fneg Sd,Sn */

@@ -25,6 +25,12 @@ extern "C" {
 
 #define MIR_API_VERSION 0.2
 
+static inline unsigned _MIR_clz (uint64_t value) {
+  unsigned n = 64;
+  for (; value != 0; value >>= 1) n--;
+  return n;
+}
+
 #ifdef NDEBUG
 static inline int mir_assert (int cond) { return 0 && cond; }
 #else
@@ -98,6 +104,7 @@ typedef enum {
   REP3 (INSN_EL, UI2F, UI2D, UI2LD), /* Unsigned integer to float or (long) double conversion */
   REP3 (INSN_EL, F2I, D2I, LD2I),    /* Float or (long) double to integer conversion */
   REP6 (INSN_EL, F2D, F2LD, D2F, D2LD, LD2F, LD2D), /* Float, (long) double conversions */
+  REP2 (INSN_EL, CLZ, CLZS), /* Leading zeros in 64/32 bits; zero returns the width. */
   REP5 (INSN_EL, NEG, NEGS, FNEG, DNEG, LDNEG),     /* Changing sign */
   REP4 (INSN_EL, ADDR, ADDR8, ADDR16, ADDR32), /* reg addr in natural mode or given integer mode */
   /* 3 operand insn: */
